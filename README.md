@@ -32,7 +32,7 @@ The application will be available at `http://localhost:3000`
 ### Using Docker Compose (Recommended)
 
 ```bash
-# Build and run the application
+# Build and run the Express application in Docker
 docker-compose up -d
 
 # View logs
@@ -43,6 +43,52 @@ docker-compose down
 ```
 
 ### Using Docker directly
+
+```bash
+# Build the image
+docker build -t ca-demo-express .
+
+# Run the container
+docker run -d -p 3000:3000 --name ca-demo-express ca-demo-express
+```
+
+### Running with Nginx Reverse Proxy
+
+For production deployment, run nginx on the host and proxy to the Docker container:
+
+```bash
+# 1. Start the Express app in Docker
+docker-compose up -d
+
+# 2. Install and configure nginx on host
+sudo apt update && sudo apt install -y nginx  # Ubuntu/Debian
+# OR for Amazon Linux:
+sudo yum update -y && sudo yum install -y nginx
+
+# 3. Copy nginx configuration
+sudo cp nginx/config.conf /etc/nginx/sites-available/ca-demo-express
+sudo ln -s /etc/nginx/sites-available/ca-demo-express /etc/nginx/sites-enabled/
+
+# 4. Remove default nginx site (optional)
+sudo rm /etc/nginx/sites-enabled/default
+
+# 5. Test nginx configuration
+sudo nginx -t
+
+# 6. Restart nginx
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+### Access the Application
+
+- **Through nginx proxy**: http://localhost (port 80)
+- **Direct Express access**: http://localhost:3000
+- **Health check**: http://localhost/health
+
+- **Through nginx proxy**: http://localhost (port 80)
+- **Direct Express access**: http://localhost:3000
+- **Health check**: http://localhost/health
 
 ```bash
 # Build the image
@@ -150,7 +196,7 @@ cd your-repo-name/ca_demo_express
 ### Step 5: Run the Application
 
 ```bash
-# Build and run with Docker Compose
+# Build and run the Express app with Docker Compose
 sudo docker-compose up -d
 
 # OR run directly with Docker
@@ -158,31 +204,26 @@ sudo docker build -t ca-demo-express .
 sudo docker run -d -p 3000:3000 --name ca-demo-express ca-demo-express
 ```
 
-### Step 6: Configure Nginx (Optional - for production)
+### Step 6: Configure Nginx (Required for production)
+
+Install and configure nginx on the EC2 host to proxy requests to the Docker container:
 
 ```bash
 # Install Nginx
 sudo yum install -y nginx  # Amazon Linux
 # OR for Ubuntu:
-sudo apt install -y nginx
+sudo apt update && sudo apt install -y nginx
 
-# Create Nginx configuration
-sudo tee /etc/nginx/conf.d/ca_demo_express.conf > /dev/null <<EOF
-server {
-    listen 80;
-    server_name your-instance-public-ip;
+# Copy the nginx configuration
+sudo cp nginx/config.conf /etc/nginx/conf.d/ca_demo_express.conf
 
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
+# Remove default nginx configuration (optional)
+sudo rm /etc/nginx/conf.d/default.conf
 
-# Start Nginx
+# Test nginx configuration
+sudo nginx -t
+
+# Start and enable nginx
 sudo systemctl start nginx
 sudo systemctl enable nginx
 ```
