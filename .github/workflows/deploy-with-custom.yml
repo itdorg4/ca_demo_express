@@ -1,0 +1,46 @@
+name: Deploy with Custom Actions
+
+on: workflow_dispatch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Copy files to EC2
+      uses: appleboy/scp-action@v0.1.4
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        source: "."
+        target: "/home/${{ secrets.EC2_USER }}/app"
+
+    - name: Install Docker
+      uses: ./.github/actions/install-docker
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        ssh_key: ${{ secrets.EC2_SSH_KEY }}
+
+    - name: Install and Configure Nginx
+      uses: ./.github/actions/install-nginx
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        ssh_key: ${{ secrets.EC2_SSH_KEY }}
+        domain: ${{ secrets.DOMAIN_NAME }}
+        app_port: '3000'
+
+    - name: Deploy Application
+      uses: ./.github/actions/deploy-app
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        ssh_key: ${{ secrets.EC2_SSH_KEY }}
+        app_path: "/home/${{ secrets.EC2_USER }}/app"

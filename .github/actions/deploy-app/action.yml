@@ -1,0 +1,65 @@
+name: 'Deploy Application on Remote EC2'
+description: 'Deploy the application using Docker Compose on a remote EC2 instance via SSH'
+inputs:
+  host:
+    description: 'EC2 instance hostname or IP address'
+    required: true
+  username:
+    description: 'SSH username (e.g., ec2-user, ubuntu)'
+    required: true
+  ssh_key:
+    description: 'SSH private key content'
+    required: true
+  app_path:
+    description: 'Path to the application on the EC2 instance'
+    required: false
+    default: '/home/ubuntu/app'
+  port:
+    description: 'SSH port'
+    required: false
+    default: '22'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup SSH key
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh_key }}" > ~/.ssh/ec2_key
+        chmod 600 ~/.ssh/ec2_key
+
+    - name: Deploy application with Docker Compose
+      shell: bash
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key -p ${{ inputs.port }} ${{ inputs.username }}@${{ inputs.host }} << EOF
+        echo "Navigating to application directory..."
+        cd ${{ inputs.app_path }}
+        
+        echo "Stopping existing containers (if any)..."
+        sudo docker compose down 2>/dev/null || sudo docker-compose down 2>/dev/null || true
+        
+        echo "Building and starting containers..."
+        if command -v docker &> /dev/null; then
+          if sudo docker compose version &> /dev/null; then
+            sudo docker compose up -d --build
+            echo "Checking container status..."
+            sudo docker compose ps
+          else
+            sudo docker-compose up -d --build
+            echo "Checking container status..."
+            sudo docker-compose ps
+          fi
+        else
+          echo "Error: Docker is not installed!"
+          exit 1
+        fi
+        
+        echo "Application deployment completed!"
+        EOF
+
+    - name: Cleanup SSH key
+      shell: bash
+      if: always()
+      run: rm -f ~/.ssh/ec2_key
+

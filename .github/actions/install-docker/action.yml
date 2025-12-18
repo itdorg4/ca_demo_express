@@ -1,0 +1,90 @@
+name: 'Install Docker on Remote EC2'
+description: 'Install Docker on a remote EC2 instance via SSH'
+inputs:
+  host:
+    description: 'EC2 instance hostname or IP address'
+    required: true
+  username:
+    description: 'SSH username (e.g., ec2-user, ubuntu)'
+    required: true
+  ssh_key:
+    description: 'SSH private key content'
+    required: true
+  port:
+    description: 'SSH port'
+    required: false
+    default: '22'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup SSH key
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh_key }}" > ~/.ssh/ec2_key
+        chmod 600 ~/.ssh/ec2_key
+
+    - name: Install Docker on EC2
+      shell: bash
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key -p ${{ inputs.port }} ${{ inputs.username }}@${{ inputs.host }} << 'EOF'
+        # Detect OS
+        OS_ID=$(cat /etc/os-release | grep -E '^ID=' | cut -d'=' -f2 | tr -d '"')
+        echo "Detected OS: $OS_ID"
+
+        if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+          echo "Updating package list..."
+          sudo apt update -y
+
+          echo "Installing prerequisites..."
+          sudo apt install -y ca-certificates curl
+
+          echo "Setting up Docker repository..."
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+          UBUNTU_CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+          echo "Types: deb
+        URIs: https://download.docker.com/linux/ubuntu
+        Suites: $UBUNTU_CODENAME
+        Components: stable
+        Signed-By: /etc/apt/keyrings/docker.asc" | sudo tee /etc/apt/sources.list.d/docker.sources
+
+          echo "Updating package list with Docker repository..."
+          sudo apt update -y
+
+          echo "Installing Docker..."
+          sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+        elif [ "$OS_ID" = "amzn" ] || [ "$OS_ID" = "amazon" ]; then
+          echo "Updating package list..."
+          sudo yum update -y
+
+          echo "Installing Docker..."
+          sudo yum install -y docker
+
+        else
+          echo "Warning: Unsupported OS type. Attempting generic installation..."
+          sudo apt update || sudo yum update -y
+          sudo apt install -y docker.io || sudo yum install -y docker
+        fi
+
+        echo "Starting Docker service..."
+        sudo systemctl start docker
+        sudo systemctl enable docker
+
+        echo "Adding user to docker group..."
+        sudo usermod -aG docker $USER
+
+        echo "Checking Docker status..."
+        sudo systemctl status docker --no-pager
+
+        echo "Docker installation completed!"
+        EOF
+
+    - name: Cleanup SSH key
+      shell: bash
+      if: always()
+      run: rm -f ~/.ssh/ec2_key

@@ -1,0 +1,124 @@
+name: 'Install Nginx on Remote EC2'
+description: 'Install Nginx and configure a site on a remote EC2 instance via SSH'
+inputs:
+  host:
+    description: 'EC2 instance hostname or IP address'
+    required: true
+  username:
+    description: 'SSH username (e.g., ec2-user, ubuntu)'
+    required: true
+  ssh_key:
+    description: 'SSH private key content'
+    required: true
+  domain:
+    description: 'Domain name for the Nginx site'
+    required: true
+  app_port:
+    description: 'Application port to proxy'
+    required: false
+    default: '3000'
+  port:
+    description: 'SSH port'
+    required: false
+    default: '22'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup SSH key
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh_key }}" > ~/.ssh/ec2_key
+        chmod 600 ~/.ssh/ec2_key
+
+    - name: Install Nginx on EC2
+      shell: bash
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key -p ${{ inputs.port }} ${{ inputs.username }}@${{ inputs.host }} << 'EOF'
+        # Detect OS
+        OS_ID=$(cat /etc/os-release | grep -E '^ID=' | cut -d'=' -f2 | tr -d '"')
+        echo "Detected OS: $OS_ID"
+
+        if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+          echo "Updating package list..."
+          sudo apt update -y
+
+          echo "Installing Nginx..."
+          sudo apt install -y nginx
+
+        elif [ "$OS_ID" = "amzn" ] || [ "$OS_ID" = "amazon" ]; then
+          echo "Updating package list..."
+          sudo yum update -y
+
+          echo "Installing Nginx..."
+          sudo yum install -y nginx
+
+        else
+          echo "Warning: Unsupported OS type. Attempting generic installation..."
+          sudo apt update || sudo yum update -y
+          sudo apt install -y nginx || sudo yum install -y nginx
+        fi
+
+        echo "Starting Nginx service..."
+        sudo systemctl start nginx
+        sudo systemctl enable nginx
+
+        echo "Checking Nginx status..."
+        sudo systemctl status nginx --no-pager
+
+        echo "Nginx installation completed!"
+        EOF
+
+    - name: Configure Nginx site
+      shell: bash
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key -p ${{ inputs.port }} ${{ inputs.username }}@${{ inputs.host }} << EOF
+        # Detect OS for config path
+        OS_ID=\$(cat /etc/os-release | grep -E '^ID=' | cut -d'=' -f2 | tr -d '"')
+        
+        DOMAIN="${{ inputs.domain }}"
+        APP_PORT="${{ inputs.app_port }}"
+        
+        if [ "\$OS_ID" = "ubuntu" ] || [ "\$OS_ID" = "debian" ]; then
+          CONFIG_FILE="/etc/nginx/sites-available/\$DOMAIN"
+          ENABLED_LINK="/etc/nginx/sites-enabled/\$DOMAIN"
+        else
+          CONFIG_FILE="/etc/nginx/conf.d/\$DOMAIN.conf"
+          ENABLED_LINK=""
+        fi
+        
+        echo "Creating Nginx config at \$CONFIG_FILE..."
+        sudo tee \$CONFIG_FILE > /dev/null << 'NGINX_CONFIG'
+        server {
+            listen 80;
+            server_name ${{ inputs.domain }};
+            location / {
+                proxy_pass http://localhost:${{ inputs.app_port }};
+                proxy_set_header Host \$host;
+                proxy_set_header X-Real-IP \$remote_addr;
+                proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$scheme;
+            }
+        }
+        NGINX_CONFIG
+        
+        # Enable site for Ubuntu/Debian
+        if [ -n "\$ENABLED_LINK" ]; then
+          echo "Enabling site..."
+          sudo ln -sf \$CONFIG_FILE \$ENABLED_LINK
+        fi
+        
+        echo "Testing Nginx configuration..."
+        sudo nginx -t
+        
+        echo "Reloading Nginx..."
+        sudo systemctl reload nginx || sudo systemctl restart nginx
+        
+        echo "Nginx configuration for \$DOMAIN completed!"
+        EOF
+
+    - name: Cleanup SSH key
+      shell: bash
+      if: always()
+      run: rm -f ~/.ssh/ec2_key
